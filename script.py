@@ -18,7 +18,19 @@ REQUEST_INTERVAL_SEC = 0.5
 COLUMNS = ["date", "news_title", "news_source", "news_url"]
 REQUIRED_COLUMNS = ["date", "news_title", "news_source"]
 
-# 経済安全保障・輸出管理に関する検索キーワード（英語・日本語）
+# ---------------------------------------------------------------
+# 1. 米国政府機関などの公式RSSフィード（一次情報）
+# ---------------------------------------------------------------
+GOVERNMENT_FEEDS = [
+    {
+        "name": "Federal Register (BIS/Export Controls)",
+        "url": "https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bagencies%5D%5B%5D=industry-and-security-bureau"
+    },
+]
+
+# ---------------------------------------------------------------
+# 2. 検索クエリ（Google News RSS：メディア・速報報道用）
+# ---------------------------------------------------------------
 KEYWORDS_EN = [
     "Bureau of Industry and Security", "BIS regulation", "export controls",
     "Entity List", "Foreign Direct Product Rule", "chip export controls",
@@ -84,6 +96,7 @@ SOURCE_ALIASES = [
     ("ロイター", "Reuters"),
     ("CNN", "CNN"),
     ("Politico", "Politico"),
+    ("Federal Register", "Federal Register"),
 ]
 
 def canonical_source(name: str) -> str:
@@ -110,9 +123,44 @@ def is_relevant(entry) -> bool:
 def normalize_key(title: str) -> str:
     return re.sub(r"[\s\W_]+", "", nfkc(title)).lower()
 
+def fetch_government_rss():
+    """米国政府機関等の公式RSSから直接告示・プレスリリースを取得する"""
+    gov_rows = []
+    print("== 政府機関公式RSSの取得状況 ==")
+    for feed_info in GOVERNMENT_FEEDS:
+        try:
+            feed = feedparser.parse(feed_info["url"])
+            n = len(feed.entries)
+            print(f"  {feed_info['name']}: {n}件")
+            for entry in feed.entries:
+                title = clean_title(entry.title)
+                url = getattr(entry, "link", "") or ""
+                
+                if getattr(entry, "published_parsed", None):
+                    pub = datetime.datetime(*entry.published_parsed[:6]) + datetime.timedelta(hours=9)
+                    date_str = pub.strftime("%Y-%m-%d")
+                else:
+                    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+                
+                gov_rows.append({
+                    "date": date_str,
+                    "news_title": title,
+                    "news_source": feed_info["name"],
+                    "news_url": url,
+                })
+        except Exception as e:
+            print(f"政府RSS取得エラー ({feed_info['name']}): {e}")
+        time.sleep(REQUEST_INTERVAL_SEC)
+    return gov_rows
+
 def fetch_news():
     raw_entries = []
-    print("== 取得状況（クエリごと） ==")
+    
+    # 1. 政府機関の公式フィードから直接取得
+    gov_entries = fetch_government_rss()
+    
+    # 2. Google News RSSからメディア報道を取得
+    print("== 取得状況（Google News クエリごと） ==")
     for name, query, hl, gl, ceid in QUERIES:
         feed = get_google_news_rss(query, hl, gl, ceid)
         n = len(feed.entries)
@@ -120,10 +168,20 @@ def fetch_news():
         print(f"  {name}: {n}件 ({status})")
         raw_entries.extend(feed.entries)
         time.sleep(REQUEST_INTERVAL_SEC)
-    print(f"取得総数（重複前）: {len(raw_entries)} 件")
+    print(f"Google News 取得総数（重複前）: {len(raw_entries)} 件")
 
     rows, seen = [], set()
     dropped_count = 0
+
+    # 先に政府機関公式フィード分を処理（政府発表は関連キーワードフィルタを必須とせずそのまま採用）
+    for item in gov_entries:
+        key = normalize_key(item["news_title"])
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        rows.append(item)
+
+    # 次にGoogle News分をフィルタリングして追加
     for entry in raw_entries:
         source = source_name(entry)
         if not is_allowed_source(source) or not is_relevant(entry):
@@ -149,7 +207,8 @@ def fetch_news():
             "news_url": getattr(entry, "link", "") or "",
         })
 
-    print(f"条件外のため除外: {dropped_count} 件")
+    print(f"Google News 条件外のため除外: {dropped_count} 件")
+    print(f"今回最終取得総数: {len(rows)} 件（政府公式含む）")
     return rows
 
 def load_existing() -> pd.DataFrame:
