@@ -134,7 +134,6 @@ def fetch_direct_sources():
                     title = clean_title(entry.title)
                     link = getattr(entry, "link", "") or ""
                     
-                    # 公式直接取得分はノイズチェックを通す
                     if title and is_relevant(title, getattr(entry, "summary", "")):
                         if getattr(entry, "published_parsed", None):
                             pub = datetime.datetime(*entry.published_parsed[:6]) + datetime.timedelta(hours=9)
@@ -154,6 +153,13 @@ def fetch_direct_sources():
                     print(f"  {name} (HTML): HTTP Status {resp.status_code}")
                     continue
                 
+                # 【文字化け対策】CISTECなどの場合、エンコーディングを明示・自動調整
+                if "cistec.or.jp" in url:
+                    # CISTECはShift_JISまたはCP932でエンコードされていることが多い
+                    resp.encoding = resp.apparent_encoding if resp.apparent_encoding else "shift_jis"
+                else:
+                    resp.encoding = resp.apparent_encoding
+                
                 soup = BeautifulSoup(resp.text, "html.parser")
                 elements = soup.select(feed["selector"])
                 print(f"  {name} (HTML): {len(elements)}要素取得")
@@ -167,11 +173,9 @@ def fetch_direct_sources():
                     if not title or len(title) < 5 or not href:
                         continue
                     
-                    # ノイズチェック
                     if not is_relevant(title):
                         continue
                     
-                    # リンクの絶対パス化
                     if href.startswith("http"):
                         link = href
                     elif href.startswith("/"):
