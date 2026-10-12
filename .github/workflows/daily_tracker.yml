@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install feedparser pandas
+          pip install feedparser pandas beautifulsoup4 requests
       - name: Run collector script
         run: python script.py
       - name: Commit and push CSV
