@@ -21,13 +21,13 @@ COLUMNS = ["date", "news_title", "news_source", "news_url"]
 REQUIRED_COLUMNS = ["date", "news_title", "news_source"]
 
 # ---------------------------------------------------------------
-# 1. 指定4機関（CISTEC, OFAC, CSIS, JETRO）および公式フィードの直接取得設定
+# 1. 指定機関・公式フィードの直接取得設定
 # ---------------------------------------------------------------
 DIRECT_FEEDS = [
     {
         "name": "OFAC (Recent Actions)",
         "type": "rss",
-        "url": "https://ofac.treasury.gov/recent-actions.xml"  # または公式の更新情報ページ
+        "url": "https://ofac.treasury.gov/recent-actions.xml"
     },
     {
         "name": "CSIS (Press Releases)",
@@ -80,11 +80,20 @@ ALLOWED_SOURCES = [
     "CISTEC", "JETRO", "CSIS", "Federal Register", "OFAC",
 ]
 
+# 関連判定パターン（輸出管理・経済安保に関連するキーワード）
 SECURITY_PATTERN = re.compile(
     r"(輸出管理|BIS|Bureau of Industry and Security|Entity List|"
     r"エンティティリスト|外国為替|外為法|経済安全保障|経済安保|制裁|"
     r"Sanctions|Export Control|CFIUS|禁輸|半導体規制|Supply Chain|"
     r"CISTEC|JETRO|USCC|OFAC|DDTC|CSIS|NSA)",
+    re.IGNORECASE,
+)
+
+# 【新規追加】市場調査・SEO自動生成記事などのノイズを除外するためのパターン
+NOISE_PATTERN = re.compile(
+    r"(CAGR|年平均成長率|市場予測|市場の成長|市場シェア|詳細分析|世界市場の主要プレイヤー|"
+    r"リサーチレポート|市場規模は成長を続け|プロセス液体制御|エッチングガス|圧力センサー|"
+    r"ダイシングダイアタッチフィルム|プローブカード|IPコア|ICソケット)",
     re.IGNORECASE,
 )
 
@@ -99,6 +108,14 @@ def clean_title(raw: str) -> str:
 
 def normalize_key(title: str) -> str:
     return re.sub(r"[\s\W_]+", "", nfkc(title)).lower()
+
+def is_relevant(entry_title: str, entry_summary: str = "") -> bool:
+    text = nfkc(f"{entry_title} {entry_summary}")
+    # 1. ノイズパターンに一致する場合は強制除外
+    if NOISE_PATTERN.search(text):
+        return False
+    # 2. セキュリティ・輸出管理関連パターンに一致するか
+    return bool(SECURITY_PATTERN.search(text))
 
 def fetch_direct_sources():
     """CISTEC, OFAC, CSIS, JETROなどの公式サイトを直接スクレイピング・RSS取得する"""
@@ -116,13 +133,15 @@ def fetch_direct_sources():
                 for entry in parsed.entries:
                     title = clean_title(entry.title)
                     link = getattr(entry, "link", "") or ""
-                    if getattr(entry, "published_parsed", None):
-                        pub = datetime.datetime(*entry.published_parsed[:6]) + datetime.timedelta(hours=9)
-                        date_str = pub.strftime("%Y-%m-%d")
-                    else:
-                        date_str = datetime.datetime.now().strftime("%Y-%m-%d")
                     
-                    if title:
+                    # 公式直接取得分はノイズチェックを通す
+                    if title and is_relevant(title, getattr(entry, "summary", "")):
+                        if getattr(entry, "published_parsed", None):
+                            pub = datetime.datetime(*entry.published_parsed[:6]) + datetime.timedelta(hours=9)
+                            date_str = pub.strftime("%Y-%m-%d")
+                        else:
+                            date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+                        
                         rows.append({
                             "date": date_str,
                             "news_title": title,
@@ -148,6 +167,10 @@ def fetch_direct_sources():
                     if not title or len(title) < 5 or not href:
                         continue
                     
+                    # ノイズチェック
+                    if not is_relevant(title):
+                        continue
+                    
                     # リンクの絶対パス化
                     if href.startswith("http"):
                         link = href
@@ -156,7 +179,6 @@ def fetch_direct_sources():
                     else:
                         link = base_domain + "/" + href
                         
-                    # ノイズになりやすい汎用リンクを除外
                     if any(skip in title.lower() for skip in ["home", "menu", "contact", "sitemap", "プライバシー"]):
                         continue
                         
@@ -167,7 +189,7 @@ def fetch_direct_sources():
                         "news_url": link
                     })
                     parsed_count += 1
-                    if parsed_count >= 15:  # 1機関あたり最大15件まで
+                    if parsed_count >= 15:
                         break
         except Exception as e:
             print(f"  {name} 取得エラー: {e}")
@@ -176,10 +198,8 @@ def fetch_direct_sources():
     return rows
 
 def fetch_news():
-    # 1. 公式サイト・機関からの直接取得
     direct_entries = fetch_direct_sources()
     
-    # 2. Google News RSSからの補助取得
     raw_entries = []
     for name, query, hl, gl, ceid in QUERIES:
         encoded = urllib.parse.quote(query)
@@ -198,9 +218,16 @@ def fetch_news():
         seen.add(key)
         rows.append(item)
 
-    # 次にGoogle News分を処理
+    # Google News分は厳格な関連判定＋ノイズフィルターを通す
+    dropped_noise = 0
     for entry in raw_entries:
         title = clean_title(entry.title)
+        summary = getattr(entry, "summary", "")
+        
+        if not is_relevant(title, summary):
+            dropped_noise += 1
+            continue
+
         key = normalize_key(title)
         if not key or key in seen:
             continue
@@ -219,7 +246,8 @@ def fetch_news():
             "news_url": getattr(entry, "link", "") or "",
         })
 
-    print(f"今回最終取得総数: {len(rows)} 件（公式直接取得を含む）")
+    print(f"Google News ノイズ除外数: {dropped_noise} 件")
+    print(f"今回最終取得総数: {len(rows)} 件")
     return rows
 
 def load_existing() -> pd.DataFrame:
