@@ -147,20 +147,25 @@ def fetch_direct_sources():
                             "news_source": name,
                             "news_url": link
                         })
+
             elif feed["type"] == "html":
                 resp = requests.get(url, headers=headers, timeout=15)
                 if resp.status_code != 200:
                     print(f"  {name} (HTML): HTTP Status {resp.status_code}")
                     continue
                 
-                # 【文字化け対策】CISTECなどの場合、エンコーディングを明示・自動調整
+                # 【文字化け完全対策】CISTECの場合はShift_JIS/cp932で強制デコード
                 if "cistec.or.jp" in url:
-                    # CISTECはShift_JISまたはCP932でエンコードされていることが多い
-                    resp.encoding = resp.apparent_encoding if resp.apparent_encoding else "shift_jis"
+                    try:
+                        html_text = resp.content.decode("cp932", errors="replace")
+                    except Exception:
+                        html_text = resp.content.decode("shift_jis", errors="replace")
                 else:
-                    resp.encoding = resp.apparent_encoding
+                    # その他のサイトは自動判定またはutf-8
+                    encoding = resp.apparent_encoding if resp.apparent_encoding else "utf-8"
+                    html_text = resp.content.decode(encoding, errors="replace")
                 
-                soup = BeautifulSoup(resp.text, "html.parser")
+                soup = BeautifulSoup(html_text, "html.parser")
                 elements = soup.select(feed["selector"])
                 print(f"  {name} (HTML): {len(elements)}要素取得")
                 
