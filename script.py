@@ -31,16 +31,39 @@ GOVERNMENT_FEEDS = [
 # ---------------------------------------------------------------
 # 2. 検索クエリ（Google News RSS：メディア・速報報道用）
 # ---------------------------------------------------------------
+# 従来およびご要望の機関・レジーム・キーワードを網羅
 KEYWORDS_EN = [
+    # 米国政府機関・シンクタンク・制裁関連
     "Bureau of Industry and Security", "BIS regulation", "export controls",
     "Entity List", "Foreign Direct Product Rule", "chip export controls",
     "sanctions", "economic security", "CFIUS", "supply chain resilience",
     "unverified list", "military end-use",
+    "USCC", "U.S.-China Economic and Security Review Commission",
+    "OFAC", "Office of Foreign Assets Control",
+    "DDTC", "Directorate of Defense Trade Controls",
+    "CSIS", "Center for Strategic and International Studies",
+    "NSA",
+    # 国際レジーム・条約
+    "Australia Group", "Wassenaar Arrangement",
+    "Missile Technology Control Regime", "MTCR",
+    "Nuclear Suppliers Group", "NSG",
+    "CWC", "Chemical Weapons Convention", "OPCW",
 ]
+
 KEYWORDS_JA = [
+    # 基本キーワード
     "輸出管理", "BIS規制", "エンティティリスト", "経済安全保障",
     "外国為替及び外国貿易法", "外為法", "みなし輸出", "経済安保",
     "半導体規制", "安全保障貿易", "禁輸措置",
+    # 追加の日本機関
+    "CISTEC", "安全保障貿易情報センター",
+    "JETRO", "日本貿易振興機構",
+    # 追加の米国機関・シンクタンク
+    "米中経済安全保障調査委員会", "OFAC", "DDTC", "CSIS", "NSA",
+    # 国際レジーム
+    "オーストラリアグループ", "ワッセナー・アレンジメント",
+    "ミサイル技術管理レジメン", "原子力供給国グループ",
+    "化学兵器禁止機関",
 ]
 
 QUERIES = []
@@ -55,19 +78,22 @@ ALLOWED_SOURCES = [
     # 日本
     "日本経済新聞", "日経", "読売新聞", "朝日新聞", "毎日新聞", "産経", "NHK",
     "ロイター", "Reuters", "ブルームバーグ", "Bloomberg", "時事", "共同通信",
-    "JBpress", "東洋経済", "日経クロステック", "ITmedia",
+    "JBpress", "東洋経済", "日経クロステック", "ITmedia", "CISTEC", "JETRO",
     # 米国・海外
     "Federal Register", "Reuters", "Bloomberg", "Wall Street Journal", "The New York Times",
     "The Washington Post", "Financial Times", "Politico", "POLITICO", "Axios",
-    "CNBC", "BBC", "The Guardian", "The Telegraph",
+    "CNBC", "BBC", "The Guardian", "The Telegraph", "CSIS",
 ]
 
-# 関連判定パターン（NFKC正規化後のタイトル＋概要に対して判定）
+# 関連判定パターン（追加した機関やレジームの略称・名称も幅広くカバー）
 SECURITY_PATTERN = re.compile(
     r"(輸出管理|BIS|Bureau of Industry and Security|Entity List|"
     r"エンティティリスト|外国為替|外為法|経済安全保障|経済安保|制裁|"
     r"Sanctions|Export Control|CFIUS|禁輸|半導体規制|Supply Chain|"
-    r"FDPR|Foreign Direct Product)",
+    r"FDPR|Foreign Direct Product|"
+    r"CISTEC|JETRO|USCC|OFAC|DDTC|CSIS|NSA|"
+    r"Australia Group|Wassenaar|MTCR|Nuclear Suppliers Group|OPCW|"
+    r"オーストラリアグループ|ワッセナー|原子力供給国グループ)",
     re.IGNORECASE,
 )
 
@@ -97,6 +123,7 @@ SOURCE_ALIASES = [
     ("CNN", "CNN"),
     ("Politico", "Politico"),
     ("Federal Register", "Federal Register"),
+    ("CSIS", "CSIS"),
 ]
 
 def canonical_source(name: str) -> str:
@@ -173,7 +200,7 @@ def fetch_news():
     rows, seen = [], set()
     dropped_count = 0
 
-    # 先に政府機関公式フィード分を処理（政府発表は関連キーワードフィルタを必須とせずそのまま採用）
+    # 先に政府機関公式フィード分を処理
     for item in gov_entries:
         key = normalize_key(item["news_title"])
         if not key or key in seen:
