@@ -4,7 +4,6 @@ import re
 import time
 import unicodedata
 import urllib.parse
-import urllib.request  # ← ここに追加します
 
 from bs4 import BeautifulSoup
 import feedparser
@@ -22,7 +21,7 @@ COLUMNS = ["date", "news_title", "news_source", "news_url"]
 REQUIRED_COLUMNS = ["date", "news_title", "news_source"]
 
 # ---------------------------------------------------------------
-# 1. 指定機関・公式フィードの直接取得設定
+# 1. 公式サイト・RSSの直接取得設定（文字化け対策としてCISTECの直接HTMLスクレイピングを除外）
 # ---------------------------------------------------------------
 DIRECT_FEEDS = [
     {
@@ -35,12 +34,6 @@ DIRECT_FEEDS = [
         "type": "html",
         "url": "https://www.csis.org/about/media/press-releases",
         "selector": "a.link, .view-content h3 a, main a"
-    },
-    {
-        "name": "CISTEC (新着情報)",
-        "type": "html",
-        "url": "https://www.cistec.or.jp/",
-        "selector": "a"
     },
     {
         "name": "JETRO (安全保障貿易管理)",
@@ -56,7 +49,7 @@ DIRECT_FEEDS = [
 ]
 
 # ---------------------------------------------------------------
-# 2. 検索クエリ（Google News RSS：補助的な報道用）
+# 2. 検索クエリ（Google News RSS：CISTECや各機関の報道を網羅）
 # ---------------------------------------------------------------
 KEYWORDS_EN = [
     "Bureau of Industry and Security", "BIS regulation", "export controls",
@@ -66,7 +59,7 @@ KEYWORDS_EN = [
 KEYWORDS_JA = [
     "輸出管理", "BIS規制", "エンティティリスト", "経済安全保障",
     "外国為替及び外国貿易法", "外為法", "みなし輸出", "経済安保",
-    "半導体規制", "CISTEC", "JETRO", "OFAC", "CSIS",
+    "半導体規制", "CISTEC", "安全保障貿易情報センター", "JETRO", "OFAC", "CSIS",
 ]
 
 QUERIES = []
@@ -75,22 +68,16 @@ for kw in KEYWORDS_JA:
 for kw in KEYWORDS_EN:
     QUERIES.append((f"US: {kw}", f"{kw} {SEARCH_WINDOW}", "en-US", "US", "US:en"))
 
-ALLOWED_SOURCES = [
-    "日本経済新聞", "日経", "読売新聞", "朝日新聞", "毎日新聞", "産経", "NHK",
-    "ロイター", "Reuters", "ブルームバーグ", "Bloomberg", "時事", "共同通信",
-    "CISTEC", "JETRO", "CSIS", "Federal Register", "OFAC",
-]
-
 # 関連判定パターン（輸出管理・経済安保に関連するキーワード）
 SECURITY_PATTERN = re.compile(
     r"(輸出管理|BIS|Bureau of Industry and Security|Entity List|"
     r"エンティティリスト|外国為替|外為法|経済安全保障|経済安保|制裁|"
     r"Sanctions|Export Control|CFIUS|禁輸|半導体規制|Supply Chain|"
-    r"CISTEC|JETRO|USCC|OFAC|DDTC|CSIS|NSA)",
+    r"CISTEC|安全保障貿易情報センター|JETRO|USCC|OFAC|DDTC|CSIS|NSA)",
     re.IGNORECASE,
 )
 
-# 【新規追加】市場調査・SEO自動生成記事などのノイズを除外するためのパターン
+# 市場調査・SEO自動生成記事などのノイズを除外するためのパターン
 NOISE_PATTERN = re.compile(
     r"(CAGR|年平均成長率|市場予測|市場の成長|市場シェア|詳細分析|世界市場の主要プレイヤー|"
     r"リサーチレポート|市場規模は成長を続け|プロセス液体制御|エッチングガス|圧力センサー|"
@@ -112,16 +99,12 @@ def normalize_key(title: str) -> str:
 
 def is_relevant(entry_title: str, entry_summary: str = "") -> bool:
     text = nfkc(f"{entry_title} {entry_summary}")
-    # 1. ノイズパターンに一致する場合は強制除外
     if NOISE_PATTERN.search(text):
         return False
-    # 2. セキュリティ・輸出管理関連パターンに一致するか
     return bool(SECURITY_PATTERN.search(text))
 
-import urllib.request
-
 def fetch_direct_sources():
-    """CISTEC, OFAC, CSIS, JETROなどの公式サイトを直接スクレイピング・RSS取得する"""
+    """公式サイト・RSSの直接巡回"""
     rows = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     
@@ -151,24 +134,13 @@ def fetch_direct_sources():
                             "news_url": link
                         })
             elif feed["type"] == "html":
-                # CISTEC専用の文字化け完全解消ロジック
-                if "cistec.or.jp" in url:
-                    try:
-                        req = urllib.request.Request(url, headers=headers)
-                        with urllib.request.urlopen(req, timeout=15) as resp:
-                            raw_bytes = resp.read()
-                        # CISTECはWindows-31J (cp932) でエンコードされているため強制適用
-                        html_text = raw_bytes.decode("cp932", errors="ignore")
-                    except Exception as e:
-                        print(f"  {name} urllib取得エラー: {e}")
-                        continue
-                else:
-                    resp = requests.get(url, headers=headers, timeout=15)
-                    if resp.status_code != 200:
-                        print(f"  {name} (HTML): HTTP Status {resp.status_code}")
-                        continue
-                    encoding = resp.apparent_encoding if resp.apparent_encoding else "utf-8"
-                    html_text = resp.content.decode(encoding, errors="replace")
+                resp = requests.get(url, headers=headers, timeout=15)
+                if resp.status_code != 200:
+                    print(f"  {name} (HTML): HTTP Status {resp.status_code}")
+                    continue
+                
+                encoding = resp.apparent_encoding if resp.apparent_encoding else "utf-8"
+                html_text = resp.content.decode(encoding, errors="replace")
                 
                 soup = BeautifulSoup(html_text, "html.parser")
                 elements = soup.select(feed["selector"])
@@ -178,10 +150,9 @@ def fetch_direct_sources():
                 base_domain = "/".join(url.split("/")[:3])
                 
                 for el in elements:
-                    raw_text = el.get_text()
-                    title = clean_title(raw_text)
+                    title = clean_title(el.get_text())
                     href = el.get("href", "")
-                    if not title or len(title) < 3 or not href:
+                    if not title or len(title) < 5 or not href:
                         continue
                     
                     if not is_relevant(title):
