@@ -156,11 +156,17 @@ def fetch_direct_sources():
                     req = urllib.request.Request(url, headers=headers)
                     with urllib.request.urlopen(req, timeout=15) as resp:
                         raw_bytes = resp.read()
-                    # Shift_JIS / cp932 でデコード
-                    try:
-                        html_text = raw_bytes.decode("cp932", errors="replace")
-                    except Exception:
-                        html_text = raw_bytes.decode("shift_jis", errors="replace")
+                    
+                    # 優先順位を変えてデコードを試みる
+                    html_text = ""
+                    for enc in ["cp932", "shift_jis", "utf-8", "euc-jp"]:
+                        try:
+                            html_text = raw_bytes.decode(enc)
+                            break
+                        except Exception:
+                            continue
+                    if not html_text:
+                        html_text = raw_bytes.decode("cp932", errors="ignore")
                 else:
                     resp = requests.get(url, headers=headers, timeout=15)
                     if resp.status_code != 200:
