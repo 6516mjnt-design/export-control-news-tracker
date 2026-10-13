@@ -4,6 +4,7 @@ import re
 import time
 import unicodedata
 import urllib.parse
+import urllib.request  # ← ここに追加します
 
 from bs4 import BeautifulSoup
 import feedparser
@@ -117,6 +118,8 @@ def is_relevant(entry_title: str, entry_summary: str = "") -> bool:
     # 2. セキュリティ・輸出管理関連パターンに一致するか
     return bool(SECURITY_PATTERN.search(text))
 
+import urllib.request
+
 def fetch_direct_sources():
     """CISTEC, OFAC, CSIS, JETROなどの公式サイトを直接スクレイピング・RSS取得する"""
     rows = []
@@ -147,21 +150,22 @@ def fetch_direct_sources():
                             "news_source": name,
                             "news_url": link
                         })
-
             elif feed["type"] == "html":
-                resp = requests.get(url, headers=headers, timeout=15)
-                if resp.status_code != 200:
-                    print(f"  {name} (HTML): HTTP Status {resp.status_code}")
-                    continue
-                
-                # 【文字化け完全対策】CISTECの場合はShift_JIS/cp932で強制デコード
+                # CISTEC専用の確実な文字コードデコード処理
                 if "cistec.or.jp" in url:
+                    req = urllib.request.Request(url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        raw_bytes = resp.read()
+                    # Shift_JIS / cp932 でデコード
                     try:
-                        html_text = resp.content.decode("cp932", errors="replace")
+                        html_text = raw_bytes.decode("cp932", errors="replace")
                     except Exception:
-                        html_text = resp.content.decode("shift_jis", errors="replace")
+                        html_text = raw_bytes.decode("shift_jis", errors="replace")
                 else:
-                    # その他のサイトは自動判定またはutf-8
+                    resp = requests.get(url, headers=headers, timeout=15)
+                    if resp.status_code != 200:
+                        print(f"  {name} (HTML): HTTP Status {resp.status_code}")
+                        continue
                     encoding = resp.apparent_encoding if resp.apparent_encoding else "utf-8"
                     html_text = resp.content.decode(encoding, errors="replace")
                 
