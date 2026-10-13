@@ -123,7 +123,7 @@ import urllib.request
 def fetch_direct_sources():
     """CISTEC, OFAC, CSIS, JETROなどの公式サイトを直接スクレイピング・RSS取得する"""
     rows = []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     
     print("== 公式サイト・機関の直接巡回状況 ==")
     for feed in DIRECT_FEEDS:
@@ -151,22 +151,17 @@ def fetch_direct_sources():
                             "news_url": link
                         })
             elif feed["type"] == "html":
-                # CISTEC専用の確実な文字コードデコード処理
+                # CISTEC専用の文字化け完全解消ロジック
                 if "cistec.or.jp" in url:
-                    req = urllib.request.Request(url, headers=headers)
-                    with urllib.request.urlopen(req, timeout=15) as resp:
-                        raw_bytes = resp.read()
-                    
-                    # 優先順位を変えてデコードを試みる
-                    html_text = ""
-                    for enc in ["cp932", "shift_jis", "utf-8", "euc-jp"]:
-                        try:
-                            html_text = raw_bytes.decode(enc)
-                            break
-                        except Exception:
-                            continue
-                    if not html_text:
+                    try:
+                        req = urllib.request.Request(url, headers=headers)
+                        with urllib.request.urlopen(req, timeout=15) as resp:
+                            raw_bytes = resp.read()
+                        # CISTECはWindows-31J (cp932) でエンコードされているため強制適用
                         html_text = raw_bytes.decode("cp932", errors="ignore")
+                    except Exception as e:
+                        print(f"  {name} urllib取得エラー: {e}")
+                        continue
                 else:
                     resp = requests.get(url, headers=headers, timeout=15)
                     if resp.status_code != 200:
@@ -183,9 +178,10 @@ def fetch_direct_sources():
                 base_domain = "/".join(url.split("/")[:3])
                 
                 for el in elements:
-                    title = clean_title(el.get_text())
+                    raw_text = el.get_text()
+                    title = clean_title(raw_text)
                     href = el.get("href", "")
-                    if not title or len(title) < 5 or not href:
+                    if not title or len(title) < 3 or not href:
                         continue
                     
                     if not is_relevant(title):
